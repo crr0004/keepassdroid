@@ -1,83 +1,59 @@
-apply plugin: 'com.android.model.application'
+apply plugin: 'com.android.application'
+android {
+    compileSdkVersion = 22
+    buildToolsVersion = "25.0.0"
 
-model {
-    android {
-        compileSdkVersion = 23
-        buildToolsVersion = "25.0.2"
+    defaultConfig {
+        applicationId = "com.android.keepass"
+        minSdkVersion = 3
+        targetSdkVersion = 12
+        versionCode = 154
+        versionName = "2.0.6.4"
 
-        defaultConfig.with {
-            applicationId = "com.android.keepass"
-            minSdkVersion.apiLevel = 4
-            targetSdkVersion.apiLevel = 12
-            versionCode = 154
-            versionName = "2.0.6.4"
+        testApplicationId = "com.keepassdroid.tests"
 
-            testApplicationId = "com.keepassdroid.tests"
-            testInstrumentationRunner = "android.test.InstrumentationTestRunner"
 
-            buildConfigFields.with {
-                create() {
-                    type = "int"
-                    name = "VALUE"
-                    value = "1"
-                }
+        /*
+        buildConfigFields.with {
+            create() {
+                type = "int"
+                name = "VALUE"
+                value = "1"
             }
         }
+        */
     }
 	
 	android.lintOptions {
         abortOnError false
     }
 
-    android.buildTypes {
-        release {
-            minifyEnabled = false
-            proguardFiles.add(file('proguard-rules.txt'))
+    externalNativeBuild {
+        cmake {
+            path "src/main/jni/CMakeLists.txt"
         }
     }
 
-    android.productFlavors {
-        create("flavor1") {
+    buildTypes {
+        release {
+            minifyEnabled = false
+            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+        }
+    }
+
+    productFlavors {
+        flavor1 {
             applicationId = "com.android.keepass"
         }
     }
 
-    android.sources {
-        main {
-            jni {
-                source {
-                    srcDirs = [
-                            "src/main/jni/aes",
-                            "src/main/jni/final_key",
-                            "src/main/jni/sha"
-                    ]
-                    exclude "**/aesxam.c"
-                    exclude "**/rfc3686.c"
-                    exclude "**/tablegen.c"
-                    exclude "**/pwd2key.c"
-                    exclude "**/sha1b.c"
-                    exclude "**/sha2b.c"
-                    exclude "**/shasum.c"
-                }
-            }
-        }
-    }
 
-    android.ndk {
-        moduleName = "final-key"
-
-        ldLibs.add("log")
-        CFlags.add("-I${file("src/main/jni/aes")}".toString())
-        CFlags.add("-I${file("src/main/jni/sha")}".toString())
-        CFlags.add("-DUSE_SHA256")
-    }
 }
 
 dependencies {
     androidTestCompile files('libs/junit4.jar')
-    compile 'com.squareup.dagger:dagger:1.2.2'
-    compile 'com.squareup.dagger:dagger-compiler:1.2.2'
-    // Set this dependency if you want to use Hamcrest matching
-    //androidTestCompile 'org.hamcrest:hamcrest-library:1.3'
-    compile 'com.android.support:support-v4:23.0.0'
+
+    compile 'com.madgag.spongycastle:core:1.54.0.0'
+    compile 'com.madgag.spongycastle:prov:1.54.0.0'
+    compile 'joda-time:joda-time:2.9.4'
 }

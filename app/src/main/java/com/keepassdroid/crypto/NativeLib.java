@@ -1,5 +1,5 @@
 /*
- * Copyright 2009 Brian Pellin.
+ * Copyright 2009-2017 Brian Pellin.
  *     
  * This file is part of KeePassDroid.
  *
@@ -31,6 +31,7 @@ public class NativeLib {
 		if ( ! isLoaded ) {
 			try {
 				System.loadLibrary("final-key");
+				System.loadLibrary("argon2");
 			} catch ( UnsatisfiedLinkError e) {
 				return false;
 			}

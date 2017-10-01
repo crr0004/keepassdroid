@@ -21,6 +21,7 @@ package com.keepassdroid.fileselect;
 
 import android.app.Activity;
 import android.content.ActivityNotFoundException;
+import android.content.ContentResolver;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.net.Uri;
@@ -54,6 +55,7 @@ import com.keepassdroid.PasswordActivity;
 import com.keepassdroid.ProgressTask;
 import com.keepassdroid.SetPasswordDialog;
 import com.keepassdroid.app.App;
+import com.keepassdroid.compat.ContentResolverCompat;
 import com.keepassdroid.compat.StorageAF;
 import com.keepassdroid.database.edit.CreateDB;
 import com.keepassdroid.database.edit.FileOnFinish;
@@ -213,6 +215,7 @@ public class FileSelectActivity extends Activity {
 					Intent i = new Intent(StorageAF.ACTION_OPEN_DOCUMENT);
 					i.addCategory(Intent.CATEGORY_OPENABLE);
 					i.setType("*/*");
+					i.setFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION|Intent.FLAG_GRANT_WRITE_URI_PERMISSION|Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
 					startActivityForResult(i, OPEN_DOC);
 				}
 				else {
@@ -385,6 +388,16 @@ public class FileSelectActivity extends Activity {
 			if (data != null) {
 				Uri uri = data.getData();
 				if (uri != null) {
+					if (StorageAF.useStorageFramework(this)) {
+						try {
+							// try to persist read and write permissions
+							ContentResolver resolver = getContentResolver();
+							ContentResolverCompat.takePersistableUriPermission(resolver, uri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
+							ContentResolverCompat.takePersistableUriPermission(resolver, uri, Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+						} catch (Exception e) {
+							// nop
+						}
+					}
 					if (requestCode == GET_CONTENT) {
 						uri = UriUtil.translate(this, uri);
 					}

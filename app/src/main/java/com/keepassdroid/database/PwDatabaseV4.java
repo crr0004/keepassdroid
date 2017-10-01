@@ -1,5 +1,5 @@
 /*
- * Copyright 2010-2016 Brian Pellin.
+ * Copyright 2010-2017 Brian Pellin.
  *     
  * This file is part of KeePassDroid.
  *
@@ -25,6 +25,7 @@ import java.io.InputStream;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
@@ -34,6 +35,7 @@ import java.util.UUID;
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
 
+import org.spongycastle.crypto.engines.AESEngine;
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
 import org.w3c.dom.Node;
@@ -43,7 +45,16 @@ import org.w3c.dom.Text;
 import android.webkit.URLUtil;
 import biz.source_code.base64Coder.Base64Coder;
 
+import com.keepassdroid.collections.VariantDictionary;
 import com.keepassdroid.crypto.CipherFactory;
+import com.keepassdroid.crypto.CryptoUtil;
+import com.keepassdroid.crypto.PwStreamCipherFactory;
+import com.keepassdroid.crypto.engine.AesEngine;
+import com.keepassdroid.crypto.engine.CipherEngine;
+import com.keepassdroid.crypto.keyDerivation.AesKdf;
+import com.keepassdroid.crypto.keyDerivation.KdfEngine;
+import com.keepassdroid.crypto.keyDerivation.KdfFactory;
+import com.keepassdroid.crypto.keyDerivation.KdfParameters;
 import com.keepassdroid.database.exception.InvalidKeyFileException;
 import com.keepassdroid.utils.EmptyUtils;
 
@@ -52,14 +63,18 @@ public class PwDatabaseV4 extends PwDatabase {
 
 	public static final Date DEFAULT_NOW = new Date();
     public static final UUID UUID_ZERO = new UUID(0,0);
+	public static final int DEFAULT_ROUNDS = 6000;
 	private static final int DEFAULT_HISTORY_MAX_ITEMS = 10; // -1 unlimited
 	private static final long DEFAULT_HISTORY_MAX_SIZE = 6 * 1024 * 1024; // -1 unlimited
 	private static final String RECYCLEBIN_NAME = "RecycleBin";
-	
-	public UUID dataCipher = CipherFactory.AES_CIPHER;
+
+	public byte[] hmacKey;
+	public UUID dataCipher = AesEngine.CIPHER_UUID;
+	public CipherEngine dataEngine = new AesEngine();
 	public PwCompressionAlgorithm compressionAlgorithm = PwCompressionAlgorithm.Gzip;
     public long numKeyEncRounds = 6000;
     public Date nameChanged = DEFAULT_NOW;
+    public Date settingsChanged = DEFAULT_NOW;
     public String description = "";
     public Date descriptionChanged = DEFAULT_NOW;
     public String defaultUserName = "";
@@ -68,6 +83,7 @@ public class PwDatabaseV4 extends PwDatabase {
     public Date keyLastChanged = DEFAULT_NOW;
     public long keyChangeRecDays = -1;
     public long keyChangeForceDays = 1;
+	public boolean keyChangeForceOnce = false;
     
     public long maintenanceHistoryDays = 365;
     public String color = "";
@@ -84,6 +100,8 @@ public class PwDatabaseV4 extends PwDatabase {
     public List<PwDeletedObject> deletedObjects = new ArrayList<PwDeletedObject>();
     public List<PwIconCustom> customIcons = new ArrayList<PwIconCustom>();
     public Map<String, String> customData = new HashMap<String, String>();
+	public KdfParameters kdfParameters = KdfFactory.getDefaultParameters();
+	public VariantDictionary publicCustomData;
     
     public String localizedAppName = "KeePassDroid";
     
@@ -132,6 +150,57 @@ public class PwDatabaseV4 extends PwDatabase {
 		}
 		
 		return md.digest(fKey);
+	}
+
+	@Override
+	public void makeFinalKey(byte[] masterSeed, byte[] masterSeed2, int numRounds) throws IOException {
+
+		byte[] transformedMasterKey = transformMasterKey(masterSeed2, masterKey, numRounds);
+
+
+		byte[] cmpKey = new byte[65];
+		System.arraycopy(masterSeed, 0, cmpKey, 0, 32);
+		System.arraycopy(transformedMasterKey, 0, cmpKey, 32, 32);
+		finalKey = CryptoUtil.resizeKey(cmpKey, 0, 64, dataEngine.keyLength());
+
+		MessageDigest md;
+		try {
+			md = MessageDigest.getInstance("SHA-512");
+			cmpKey[64] = 1;
+			hmacKey = md.digest(cmpKey);
+		} catch (NoSuchAlgorithmException e) {
+			throw new IOException("No SHA-512 implementation");
+		} finally {
+			Arrays.fill(cmpKey, (byte)0);
+		}
+	}
+
+	public void makeFinalKey(byte[] masterSeed, KdfParameters kdfP) throws IOException {
+
+		KdfEngine kdfEngine = KdfFactory.get(kdfP.kdfUUID);
+		if (kdfEngine == null) {
+			throw new IOException("Unknown key derivation function");
+		}
+		byte[] transformedMasterKey = kdfEngine.transform(masterKey, kdfP);
+		if (transformedMasterKey.length != 32) {
+			transformedMasterKey = CryptoUtil.hashSha256(transformedMasterKey);
+		}
+
+        byte[] cmpKey = new byte[65];
+		System.arraycopy(masterSeed, 0, cmpKey, 0, 32);
+        System.arraycopy(transformedMasterKey, 0, cmpKey, 32, 32);
+		finalKey = CryptoUtil.resizeKey(cmpKey, 0, 64, dataEngine.keyLength());
+
+        MessageDigest md;
+		try {
+			md = MessageDigest.getInstance("SHA-512");
+			cmpKey[64] = 1;
+			hmacKey = md.digest(cmpKey);
+		} catch (NoSuchAlgorithmException e) {
+			throw new IOException("No SHA-512 implementation");
+		} finally {
+			Arrays.fill(cmpKey, (byte)0);
+		}
 	}
 
 	@Override
@@ -390,5 +459,4 @@ public class PwDatabaseV4 extends PwDatabase {
 		
 		return filename.substring(0, lastExtDot);
 	}
-	
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright 2013-2016 Brian Pellin.
+ * Copyright 2013-2017 Brian Pellin.
  *     
  * This file is part of KeePassDroid.
  *
@@ -35,7 +35,7 @@ import java.util.zip.GZIPOutputStream;
 import javax.crypto.Cipher;
 import javax.crypto.CipherOutputStream;
 
-import org.bouncycastle.crypto.StreamCipher;
+import org.spongycastle.crypto.StreamCipher;
 import org.xmlpull.v1.XmlSerializer;
 
 import android.util.Xml;
@@ -43,6 +43,9 @@ import biz.source_code.base64Coder.Base64Coder;
 
 import com.keepassdroid.crypto.CipherFactory;
 import com.keepassdroid.crypto.PwStreamCipherFactory;
+import com.keepassdroid.crypto.engine.CipherEngine;
+import com.keepassdroid.crypto.keyDerivation.KdfEngine;
+import com.keepassdroid.crypto.keyDerivation.KdfFactory;
 import com.keepassdroid.database.BinaryPool;
 import com.keepassdroid.database.CrsAlgorithm;
 import com.keepassdroid.database.EntryHandler;
@@ -87,7 +90,9 @@ public class PwDbV4Output extends PwDbOutput {
 
 	@Override
 	public void output() throws PwDbOutputException {
-		header = (PwDbHeaderV4 ) outputHeader(mOS);
+
+
+		header = (PwDbHeaderV4) outputHeader(mOS);
 		
 		CipherOutputStream cos = attachStreamEncryptor(header, mOS);
 		
@@ -102,6 +107,7 @@ public class PwDbV4Output extends PwDbOutput {
 			} else {
 				compressed = hashed;
 			}
+
 	
 			outputDatabase(compressed);
 			compressed.close();
@@ -245,9 +251,12 @@ public class PwDbV4Output extends PwDbOutput {
 	
 	private CipherOutputStream attachStreamEncryptor(PwDbHeaderV4 header, OutputStream os) throws PwDbOutputException {
 		Cipher cipher;
+		CipherEngine engine;
 		try {
-			mPM.makeFinalKey(header.masterSeed, header.transformSeed, (int)mPM.numKeyEncRounds);
-			cipher = CipherFactory.getInstance(mPM.dataCipher, Cipher.ENCRYPT_MODE, mPM.finalKey, header.encryptionIV);
+			mPM.makeFinalKey(header.masterSeed, header.getTransformSeed(), (int)mPM.numKeyEncRounds);
+
+			engine = CipherFactory.getInstance(mPM.dataCipher);
+			cipher = engine.getCipher(Cipher.ENCRYPT_MODE, mPM.finalKey, header.encryptionIV);
 		} catch (Exception e) {
 			throw new PwDbOutputException("Invalid algorithm.", e);
 		}
@@ -263,9 +272,12 @@ public class PwDbV4Output extends PwDbOutput {
 		
 		PwDbHeaderV4 h = (PwDbHeaderV4) header;
 		random.nextBytes(h.masterSeed);
-		random.nextBytes(h.transformSeed);
 		random.nextBytes(h.encryptionIV);
-		
+
+		UUID kdfUUID = mPM.kdfParameters.kdfUUID;
+		KdfEngine kdf = KdfFactory.get(kdfUUID);
+		kdf.randomize(mPM.kdfParameters);
+
 		random.nextBytes(h.protectedStreamKey);
 		h.innerRandomStream = CrsAlgorithm.Salsa20;
 		randomStream = PwStreamCipherFactory.getInstance(h.innerRandomStream, h.protectedStreamKey);
@@ -362,7 +374,8 @@ public class PwDbV4Output extends PwDbOutput {
 		xml.startTag(null, ElemValue);
 		String strRef = null;
 		if (allowRef) {
-			strRef = binPool.poolFind(value);
+			int ref = binPool.poolFind(value);
+			strRef = Integer.toString(ref);
 		}
 		
 		if (strRef != null) {
@@ -652,9 +665,9 @@ public class PwDbV4Output extends PwDbOutput {
 	private void writeBinPool() throws IllegalArgumentException, IllegalStateException, IOException {
 		xml.startTag(null, ElemBinaries);
 		
-		for (Entry<String, ProtectedBinary> pair : binPool.entrySet()) {
+		for (Entry<Integer, ProtectedBinary> pair : binPool.entrySet()) {
 			xml.startTag(null, ElemBinary);
-			xml.attribute(null, AttrId, pair.getKey());
+			xml.attribute(null, AttrId, Integer.toString(pair.getKey()));
 			
 			subWriteValue(pair.getValue());
 			

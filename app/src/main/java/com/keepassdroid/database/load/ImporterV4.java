@@ -1,5 +1,5 @@
 /*
- * Copyright 2009-2013 Brian Pellin.
+ * Copyright 2009-2017 Brian Pellin.
  *     
  * This file is part of KeePassDroid.
  *
@@ -29,15 +29,18 @@ import java.security.InvalidKeyException;
 import java.security.NoSuchAlgorithmException;
 import java.text.ParseException;
 import java.util.Arrays;
+import java.util.Calendar;
 import java.util.Date;
 import java.util.Stack;
+import java.util.TimeZone;
 import java.util.UUID;
 import java.util.zip.GZIPInputStream;
 
 import javax.crypto.Cipher;
 import javax.crypto.NoSuchPaddingException;
 
-import org.bouncycastle.crypto.StreamCipher;
+import org.spongycastle.crypto.StreamCipher;
+import org.spongycastle.util.encoders.Base64Encoder;
 import org.xmlpull.v1.XmlPullParser;
 import org.xmlpull.v1.XmlPullParserException;
 import org.xmlpull.v1.XmlPullParserFactory;
@@ -47,7 +50,9 @@ import biz.source_code.base64Coder.Base64Coder;
 import com.keepassdroid.UpdateStatus;
 import com.keepassdroid.crypto.CipherFactory;
 import com.keepassdroid.crypto.PwStreamCipherFactory;
+import com.keepassdroid.crypto.engine.CipherEngine;
 import com.keepassdroid.database.BinaryPool;
+import com.keepassdroid.database.CrsAlgorithm;
 import com.keepassdroid.database.ITimeLogger;
 import com.keepassdroid.database.PwCompressionAlgorithm;
 import com.keepassdroid.database.PwDatabaseV4;
@@ -64,7 +69,9 @@ import com.keepassdroid.database.security.ProtectedBinary;
 import com.keepassdroid.database.security.ProtectedString;
 import com.keepassdroid.stream.BetterCipherInputStream;
 import com.keepassdroid.stream.HashedBlockInputStream;
+import com.keepassdroid.stream.HmacBlockInputStream;
 import com.keepassdroid.stream.LEDataInputStream;
+import com.keepassdroid.utils.DateUtil;
 import com.keepassdroid.utils.EmptyUtils;
 import com.keepassdroid.utils.MemUtil;
 import com.keepassdroid.utils.Types;
@@ -75,7 +82,14 @@ public class ImporterV4 extends Importer {
 	private PwDatabaseV4 db;
 	private BinaryPool binPool = new BinaryPool();
 
-		private byte[] hashOfHeader = null;
+    private byte[] hashOfHeader = null;
+	private byte[] pbHeader = null;
+	private long version;
+	Calendar utcCal;
+
+	public ImporterV4() {
+		utcCal = Calendar.getInstance(TimeZone.getTimeZone("UTC"));
+	}
 	
 	protected PwDatabaseV4 createDB() {
 		return new PwDatabaseV4();
@@ -97,16 +111,22 @@ public class ImporterV4 extends Importer {
 		db = createDB();
 		
 		PwDbHeaderV4 header = new PwDbHeaderV4(db);
-		
-		hashOfHeader = header.loadFromFile(inStream);
+
+		PwDbHeaderV4.HeaderAndHash hh = header.loadFromFile(inStream);
+        version = header.version;
+
+		hashOfHeader = hh.hash;
+		pbHeader = hh.header;
 			
 		db.setMasterKey(password, keyInputStream);
-		db.makeFinalKey(header.masterSeed, header.transformSeed, (int)db.numKeyEncRounds);
-		
-		// Attach decryptor
+		db.makeFinalKey(header.masterSeed, db.kdfParameters);
+
+		CipherEngine engine;
 		Cipher cipher;
 		try {
-			cipher = CipherFactory.getInstance(db.dataCipher, Cipher.DECRYPT_MODE, db.finalKey, header.encryptionIV);
+			engine = CipherFactory.getInstance(db.dataCipher);
+			db.dataEngine = engine;
+			cipher = engine.getCipher(Cipher.DECRYPT_MODE, db.finalKey, header.encryptionIV);
 		} catch (NoSuchAlgorithmException e) {
 			throw new IOException("Invalid algorithm.");
 		} catch (NoSuchPaddingException e) {
@@ -116,30 +136,60 @@ public class ImporterV4 extends Importer {
 		} catch (InvalidAlgorithmParameterException e) {
 			throw new IOException("Invalid algorithm.");
 		}
-		
-		InputStream decrypted = new BetterCipherInputStream(inStream, cipher, 50 * 1024);
-		LEDataInputStream dataDecrypted = new LEDataInputStream(decrypted);
-		byte[] storedStartBytes = null;
-		try {
-			storedStartBytes = dataDecrypted.readBytes(32);
-			if ( storedStartBytes == null || storedStartBytes.length != 32 ) {
+
+		InputStream isPlain;
+		if (version < PwDbHeaderV4.FILE_VERSION_32_4) {
+
+			InputStream decrypted = AttachCipherStream(inStream, cipher);
+			LEDataInputStream dataDecrypted = new LEDataInputStream(decrypted);
+			byte[] storedStartBytes = null;
+			try {
+				storedStartBytes = dataDecrypted.readBytes(32);
+				if (storedStartBytes == null || storedStartBytes.length != 32) {
+					throw new InvalidPasswordException();
+				}
+			} catch (IOException e) {
 				throw new InvalidPasswordException();
 			}
-		} catch (IOException e) {
-			throw new InvalidPasswordException();
+
+			if (!Arrays.equals(storedStartBytes, header.streamStartBytes)) {
+				throw new InvalidPasswordException();
+			}
+
+			isPlain = new HashedBlockInputStream(dataDecrypted);
 		}
-		
-		if ( ! Arrays.equals(storedStartBytes, header.streamStartBytes) ) {
-			throw new InvalidPasswordException();
+		else { // KDBX 4
+			LEDataInputStream isData = new LEDataInputStream(inStream);
+			byte[] storedHash = isData.readBytes(32);
+			if (!Arrays.equals(storedHash,hashOfHeader)) {
+				throw new InvalidDBException();
+			}
+
+			byte[] hmacKey = db.hmacKey;
+			byte[] headerHmac = PwDbHeaderV4.computeHeaderHmac(pbHeader, hmacKey);
+			byte[] storedHmac = isData.readBytes(32);
+			if (storedHmac == null || storedHmac.length != 32) {
+				throw new InvalidDBException();
+			}
+			// Mac doesn't match
+			if (! Arrays.equals(headerHmac, storedHmac)) {
+				throw new InvalidDBException();
+			}
+
+			HmacBlockInputStream hmIs = new HmacBlockInputStream(isData, true, hmacKey);
+
+			isPlain = AttachCipherStream(hmIs, cipher);
 		}
 
-		HashedBlockInputStream hashed = new HashedBlockInputStream(dataDecrypted); 
-		
-		InputStream decompressed;
+		InputStream isXml;
 		if ( db.compressionAlgorithm == PwCompressionAlgorithm.Gzip ) {
-			decompressed = new GZIPInputStream(hashed); 
+			isXml = new GZIPInputStream(isPlain);
 		} else {
-			decompressed = hashed;
+			isXml = isPlain;
+		}
+
+		if (version >= header.FILE_VERSION_32_4) {
+			LoadInnerHeader(isXml, header);
 		}
 		
 		if ( header.protectedStreamKey == null ) {
@@ -153,13 +203,70 @@ public class ImporterV4 extends Importer {
 			throw new ArcFourException();
 		}
 		
-		ReadXmlStreamed(decompressed);
+		ReadXmlStreamed(isXml);
 
 		return db;
 		
 		
 	}
-	
+
+	private InputStream AttachCipherStream(InputStream is, Cipher cipher) {
+		return new BetterCipherInputStream(is, cipher, 50 * 1024);
+	}
+
+	private void LoadInnerHeader(InputStream is, PwDbHeaderV4 header) throws IOException {
+		LEDataInputStream lis = new LEDataInputStream(is);
+
+		while(true) {
+			if (!ReadInnerHeader(lis, header)) break;
+		}
+
+	}
+
+	private boolean ReadInnerHeader(LEDataInputStream lis, PwDbHeaderV4 header) throws IOException {
+		byte fieldId = (byte)lis.read();
+
+		int size = lis.readInt();
+		if (size < 0) throw new IOException("Corrupted file");
+
+		byte[] data = new byte[0];
+		if (size > 0) {
+			data = lis.readBytes(size);
+		}
+
+		boolean result = true;
+		switch(fieldId) {
+			case PwDbHeaderV4.PwDbInnerHeaderV4Fields.EndOfHeader:
+				result = false;
+				break;
+			case PwDbHeaderV4.PwDbInnerHeaderV4Fields.InnerRandomStreamID:
+			    header.setRandomStreamID(data);
+				break;
+			case PwDbHeaderV4.PwDbInnerHeaderV4Fields.InnerRandomstreamKey:
+			    header.protectedStreamKey = data;
+				break;
+			case PwDbHeaderV4.PwDbInnerHeaderV4Fields.Binary:
+			    if (data.length < 1) throw new IOException("Invalid binary format");
+				byte flag = data[0];
+				boolean prot = (flag & PwDbHeaderV4.KdbxBinaryFlags.Protected) !=
+						PwDbHeaderV4.KdbxBinaryFlags.None;
+
+				byte[] bin = new byte[data.length - 1];
+				System.arraycopy(data, 1, bin, 0, data.length-1);
+				ProtectedBinary pb = new ProtectedBinary(prot, bin);
+
+				if (prot) {
+					Arrays.fill(data, (byte)0);
+				}
+				break;
+			default:
+				assert(false);
+				break;
+		}
+
+		return result;
+	}
+
 	private enum KdbContext {
         Null,
         KeePassFile,
@@ -174,6 +281,8 @@ public class ImporterV4 extends Importer {
         DeletedObject,
         Group,
         GroupTimes,
+		GroupCustomData,
+		GroupCustomDataItem,
         Entry,
         EntryTimes,
         EntryString,
@@ -181,10 +290,11 @@ public class ImporterV4 extends Importer {
         EntryAutoType,
         EntryAutoTypeItem,
         EntryHistory,
+		EntryCustomData,
+		EntryCustomDataItem,
         Binaries
 	}
-	
-    
+
     private static final long DEFAULT_HISTORY_DAYS = 365;
 	
 	private boolean readNextNode = true;
@@ -204,7 +314,11 @@ public class ImporterV4 extends Importer {
 	private byte[] customIconData;
 	private String customDataKey = null;
 	private String customDataValue = null;
-	
+	private String groupCustomDataKey = null;
+	private String groupCustomDataValue = null;
+	private String entryCustomDataKey = null;
+	private String entryCustomDataValue = null;
+
 	private void ReadXmlStreamed(InputStream readerStream) throws IOException, InvalidDBException {
 		
 			try {
@@ -248,7 +362,7 @@ public class ImporterV4 extends Importer {
 			case XmlPullParser.END_TAG:
 				ctx = EndXmlElement(ctx, xpp);
 				break;
-				
+
 			default:
 				assert(false);
 				break;
@@ -293,6 +407,8 @@ public class ImporterV4 extends Importer {
 						throw new InvalidDBException();
 					}
 				}
+			} else if (name.equalsIgnoreCase(ElemSettingsChanged)) {
+				db.settingsChanged = ReadTime(xpp);
 			} else if ( name.equalsIgnoreCase(ElemDbName) ) {
 				db.name = ReadString(xpp);
 			} else if ( name.equalsIgnoreCase(ElemDbNameChanged) ) {
@@ -316,6 +432,8 @@ public class ImporterV4 extends Importer {
 				db.keyChangeRecDays = ReadLong(xpp, -1);
 			} else if ( name.equalsIgnoreCase(ElemDbKeyChangeForce) ) {
 				db.keyChangeForceDays = ReadLong(xpp, -1);
+			} else if ( name.equalsIgnoreCase(ElemDbKeyChangeForceOnce) ) {
+				db.keyChangeForceOnce = ReadBool(xpp, false);
 			} else if ( name.equalsIgnoreCase(ElemMemoryProt) ) {
 				return SwitchContext(ctx, KdbContext.MemoryProtection, xpp);
 			} else if ( name.equalsIgnoreCase(ElemCustomIcons) ) {
@@ -393,7 +511,8 @@ public class ImporterV4 extends Importer {
 				String key = xpp.getAttributeValue(null, AttrId);
 				if ( key != null ) {
 					ProtectedBinary pbData = ReadProtectedBinary(xpp);
-					binPool.put(key, pbData);
+					int id = Integer.parseInt(key);
+					binPool.put(id, pbData);
 				} else {
 					ReadUnknown(xpp);
 				}
@@ -461,6 +580,8 @@ public class ImporterV4 extends Importer {
 				ctxGroup.enableSearching = StringToBoolean(ReadString(xpp));
 			} else if ( name.equalsIgnoreCase(ElemLastTopVisibleEntry) ) {
 				ctxGroup.lastTopVisibleEntry = ReadUuid(xpp);
+			} else if ( name.equalsIgnoreCase(ElemCustomData) ) {
+                return SwitchContext(ctx, KdbContext.GroupCustomData, xpp);
 			} else if ( name.equalsIgnoreCase(ElemGroup) ) {
 				ctxGroup = new PwGroupV4();
 				ctxGroups.peek().AddGroup(ctxGroup, true);
@@ -477,6 +598,23 @@ public class ImporterV4 extends Importer {
 				ReadUnknown(xpp);
 			}
 			break;
+        case GroupCustomData:
+        	if (name.equalsIgnoreCase(ElemStringDictExItem)) {
+				return SwitchContext(ctx, KdbContext.GroupCustomDataItem, xpp);
+			} else {
+				ReadUnknown(xpp);
+			}
+            break;
+        case GroupCustomDataItem:
+        	if (name.equalsIgnoreCase(ElemKey)) {
+				groupCustomDataKey = ReadString(xpp);
+			} else if (name.equalsIgnoreCase(ElemValue)) {
+				groupCustomDataValue = ReadString(xpp);
+            } else {
+                ReadUnknown(xpp);
+            }
+            break;
+
 			
 		case Entry:
 			if ( name.equalsIgnoreCase(ElemUuid) ) {
@@ -501,6 +639,8 @@ public class ImporterV4 extends Importer {
 				return SwitchContext(ctx, KdbContext.EntryBinary, xpp);
 			} else if ( name.equalsIgnoreCase(ElemAutoType) ) {
 				return SwitchContext(ctx, KdbContext.EntryAutoType, xpp);
+			} else if ( name.equalsIgnoreCase(ElemCustomData)) {
+				return SwitchContext(ctx, KdbContext.EntryCustomData, xpp);
 			} else if ( name.equalsIgnoreCase(ElemHistory) ) {
 				assert(!entryInHistory);
 				
@@ -514,7 +654,23 @@ public class ImporterV4 extends Importer {
 				ReadUnknown(xpp);
 			}
 			break;
-			
+        case EntryCustomData:
+            if (name.equalsIgnoreCase(ElemStringDictExItem)) {
+                return SwitchContext(ctx, KdbContext.EntryCustomDataItem, xpp);
+            } else {
+                ReadUnknown(xpp);
+            }
+            break;
+        case EntryCustomDataItem:
+            if (name.equalsIgnoreCase(ElemKey)) {
+                entryCustomDataKey = ReadString(xpp);
+            } else if (name.equalsIgnoreCase(ElemValue)) {
+                entryCustomDataValue = ReadString(xpp);
+            } else {
+                ReadUnknown(xpp);
+            }
+            break;
+
 		case GroupTimes:
 		case EntryTimes:
 			ITimeLogger tl;
@@ -680,6 +836,20 @@ public class ImporterV4 extends Importer {
 			}
 		} else if ( ctx == KdbContext.GroupTimes && name.equalsIgnoreCase(ElemTimes) ) {
 			return KdbContext.Group;
+		} else if ( ctx == KdbContext.GroupCustomData && name.equalsIgnoreCase(ElemCustomData) ) {
+			return KdbContext.Group;
+		} else if ( ctx == KdbContext.GroupCustomDataItem && name.equalsIgnoreCase(ElemStringDictExItem)) {
+			if (groupCustomDataKey != null && groupCustomDataValue != null) {
+				ctxGroup.customData.put(groupCustomDataKey, groupCustomDataKey);
+			} else {
+				assert(false);
+			}
+
+			groupCustomDataKey = null;
+			groupCustomDataValue = null;
+
+			return KdbContext.GroupCustomData;
+
 		} else if ( ctx == KdbContext.Entry && name.equalsIgnoreCase(ElemEntry) ) {
 			if ( ctxEntry.uuid == null || ctxEntry.uuid.equals(PwDatabaseV4.UUID_ZERO) ) {
 				ctxEntry.uuid = UUID.randomUUID();
@@ -711,8 +881,21 @@ public class ImporterV4 extends Importer {
 			ctxEntry.autoType.put(ctxATName, ctxATSeq);
 			ctxATName = null;
 			ctxATSeq = null;
-			
+
 			return KdbContext.EntryAutoType;
+		} else if ( ctx == KdbContext.EntryCustomData && name.equalsIgnoreCase(ElemCustomData)) {
+			return KdbContext.Entry;
+		} else if ( ctx == KdbContext.EntryCustomDataItem && name.equalsIgnoreCase(ElemStringDictExItem)) {
+			if (entryCustomDataKey != null && entryCustomDataValue != null) {
+				ctxEntry.customData.put(entryCustomDataKey, entryCustomDataValue);
+			} else {
+				assert(false);
+			}
+
+			entryCustomDataKey = null;
+			entryCustomDataValue = null;
+
+			return KdbContext.EntryCustomData;
 		} else if ( ctx == KdbContext.EntryHistory && name.equalsIgnoreCase(ElemHistory) ) {
 			entryInHistory = false;
 			return KdbContext.Entry;
@@ -734,16 +917,30 @@ public class ImporterV4 extends Importer {
 	
 	private Date ReadTime(XmlPullParser xpp) throws IOException, XmlPullParserException {
 		String sDate = ReadString(xpp);
-		
 		Date utcDate = null;
-		try {
-			utcDate = PwDatabaseV4XML.dateFormat.parse(sDate);
-		} catch (ParseException e) {
-			// Catch with null test below
-		}
-		
-		if (utcDate == null) {
-			utcDate = new Date(0L);
+
+		if (version >= PwDbHeaderV4.FILE_VERSION_32_4) {
+			byte[] buf = Base64Coder.decode(sDate);
+			if (buf.length != 8) {
+				byte[] buf8 = new byte[8];
+				System.arraycopy(buf, 0, buf8, 0, buf.length);
+				buf = buf8;
+			}
+
+			long seconds = LEDataInputStream.readLong(buf, 0);
+			utcDate = DateUtil.convertKDBX4Time(seconds);
+
+		} else {
+
+			try {
+				utcDate = PwDatabaseV4XML.dateFormat.parse(sDate);
+			} catch (ParseException e) {
+				// Catch with null test below
+			}
+
+			if (utcDate == null) {
+				utcDate = new Date(0L);
+			}
 		}
 		
 		return utcDate;
@@ -863,8 +1060,9 @@ public class ImporterV4 extends Importer {
 		String ref = xpp.getAttributeValue(null, AttrRef);
 		if (ref != null) {
 			xpp.next(); // Consume end tag
-			
-			return binPool.get(ref);
+
+			int id = Integer.parseInt(ref);
+			return binPool.get(id);
 		} 
 		
 		boolean compressed = false;
