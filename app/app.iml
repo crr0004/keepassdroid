@@ -53,6 +53,13 @@
       <sourceFolder url="file://$MODULE_DIR$/src/flavor1Debug/jni" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/src/flavor1Debug/rs" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/src/flavor1Debug/shaders" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/build/generated/source/r/androidTest/flavor1/debug" isTestSource="true" generated="true" />
+      <sourceFolder url="file://$MODULE_DIR$/build/generated/source/aidl/androidTest/flavor1/debug" isTestSource="true" generated="true" />
+      <sourceFolder url="file://$MODULE_DIR$/build/generated/source/buildConfig/androidTest/flavor1/debug" isTestSource="true" generated="true" />
+      <sourceFolder url="file://$MODULE_DIR$/build/generated/source/rs/androidTest/flavor1/debug" isTestSource="true" generated="true" />
+      <sourceFolder url="file://$MODULE_DIR$/build/generated/source/apt/androidTest/flavor1/debug" isTestSource="true" generated="true" />
+      <sourceFolder url="file://$MODULE_DIR$/build/generated/res/rs/androidTest/flavor1/debug" type="java-test-resource" />
+      <sourceFolder url="file://$MODULE_DIR$/build/generated/res/resValues/androidTest/flavor1/debug" type="java-test-resource" />
       <sourceFolder url="file://$MODULE_DIR$/src/testFlavor1Debug/res" type="java-test-resource" />
       <sourceFolder url="file://$MODULE_DIR$/src/testFlavor1Debug/resources" type="java-test-resource" />
       <sourceFolder url="file://$MODULE_DIR$/src/testFlavor1Debug/assets" type="java-test-resource" />
@@ -61,13 +68,6 @@
       <sourceFolder url="file://$MODULE_DIR$/src/testFlavor1Debug/jni" isTestSource="true" />
       <sourceFolder url="file://$MODULE_DIR$/src/testFlavor1Debug/rs" isTestSource="true" />
       <sourceFolder url="file://$MODULE_DIR$/src/testFlavor1Debug/shaders" isTestSource="true" />
-      <sourceFolder url="file://$MODULE_DIR$/build/generated/source/r/androidTest/flavor1/debug" isTestSource="true" generated="true" />
-      <sourceFolder url="file://$MODULE_DIR$/build/generated/source/aidl/androidTest/flavor1/debug" isTestSource="true" generated="true" />
-      <sourceFolder url="file://$MODULE_DIR$/build/generated/source/buildConfig/androidTest/flavor1/debug" isTestSource="true" generated="true" />
-      <sourceFolder url="file://$MODULE_DIR$/build/generated/source/rs/androidTest/flavor1/debug" isTestSource="true" generated="true" />
-      <sourceFolder url="file://$MODULE_DIR$/build/generated/source/apt/androidTest/flavor1/debug" isTestSource="true" generated="true" />
-      <sourceFolder url="file://$MODULE_DIR$/build/generated/res/rs/androidTest/flavor1/debug" type="java-test-resource" />
-      <sourceFolder url="file://$MODULE_DIR$/build/generated/res/resValues/androidTest/flavor1/debug" type="java-test-resource" />
       <sourceFolder url="file://$MODULE_DIR$/src/flavor1/res" type="java-resource" />
       <sourceFolder url="file://$MODULE_DIR$/src/flavor1/resources" type="java-resource" />
       <sourceFolder url="file://$MODULE_DIR$/src/flavor1/assets" type="java-resource" />
@@ -146,6 +146,7 @@
       <excludeFolder url="file://$MODULE_DIR$/build/intermediates/instant-run-support" />
       <excludeFolder url="file://$MODULE_DIR$/build/intermediates/jniLibs" />
       <excludeFolder url="file://$MODULE_DIR$/build/intermediates/manifests" />
+      <excludeFolder url="file://$MODULE_DIR$/build/intermediates/pre-dexed" />
       <excludeFolder url="file://$MODULE_DIR$/build/intermediates/reload-dex" />
       <excludeFolder url="file://$MODULE_DIR$/build/intermediates/res" />
       <excludeFolder url="file://$MODULE_DIR$/build/intermediates/restart-dex" />
@@ -156,6 +157,7 @@
       <excludeFolder url="file://$MODULE_DIR$/build/intermediates/symbols" />
       <excludeFolder url="file://$MODULE_DIR$/build/intermediates/transforms" />
       <excludeFolder url="file://$MODULE_DIR$/build/outputs" />
+      <excludeFolder url="file://$MODULE_DIR$/build/reports" />
       <excludeFolder url="file://$MODULE_DIR$/build/tmp" />
     </content>
     <orderEntry type="jdk" jdkName="Android API 23 Platform" jdkType="Android SDK" />

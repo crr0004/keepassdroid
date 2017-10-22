@@ -19,6 +19,7 @@ package com.keepassdroid;
 
 import android.annotation.TargetApi;
 import android.app.Activity;
+import android.content.DialogInterface;
 import android.content.SharedPreferences;
 import android.os.Bundle;
 import android.support.v4.app.DialogFragment;
@@ -78,7 +79,7 @@ public class FingerprintAuthenticationDialogFragment extends DialogFragment
         mCancelButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-                dismiss();
+                GroupActivity.Launch(mActivity);
             }
         });
 
@@ -109,6 +110,12 @@ public class FingerprintAuthenticationDialogFragment extends DialogFragment
     public void onAttach(Activity activity) {
         super.onAttach(activity);
         mActivity = (PasswordActivity) activity;
+    }
+
+    @Override
+    public void onCancel(DialogInterface dialog) {
+        super.onCancel(dialog);
+        GroupActivity.Launch(mActivity);
     }
 
     /**
