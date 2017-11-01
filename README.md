@@ -5,7 +5,6 @@ KeePass implementation for android
 
 # Feature TODO
 See trello for more verbose on what's going on
-- [ ] Add ability to fingerprint authentications for mulitple databases
 - [ ] Add moving group entries to different group [Issue #198](https://github.com/bpellin/keepassdroid/issues/198)
 - [ ] Add autofill service
 
