@@ -1,3 +1,26 @@
+KeePassDroid (2.2.2.4)
+ * Handle fingerprint key invalidation
+
+KeePassDroid (2.2.2.3)
+ * Improve fingerprint error handling
+ * Updated Russian translations
+
+KeePassDroid (2.2.2.2)
+ * Prevent fingerprint infinite loop
+ * Update Italian translations
+
+KeePassDroid (2.2.2.1)
+ * Prevent fingerprint exception
+
+KeePassDroid (2.2.2)
+ * Fix date integer overflow
+ * Fix fingerprint listening on resume
+ * Updated German translations
+
+KeePassDroid (2.2.1)
+ * Fix kdbx4 date corruption
+ * Updated German translations
+
 KeePassDroid (2.2.0.9)
  * Update build tools version to workaround CM/Lineage bug (closes: #249)
  * Update Russian translations

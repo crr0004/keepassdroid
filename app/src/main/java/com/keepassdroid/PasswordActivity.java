@@ -1,5 +1,5 @@
 /*
- * Copyright 2009-2017 Brian Pellin.
+ * Copyright 2009-2018 Brian Pellin.
  *     
  * This file is part of KeePassDroid.
  *
@@ -195,10 +195,6 @@ public class PasswordActivity extends LockingActivity implements FingerPrintHelp
 
         prefs = PreferenceManager.getDefaultSharedPreferences(this);
         prefsNoBackup = getSharedPreferences("nobackup", Context.MODE_PRIVATE);
-        prefsNoBackup.edit()
-                .putString("test", "test")
-                .commit();
-
 
         mRememberKeyfile = prefs.getBoolean(getString(R.string.keyfile_key), getResources().getBoolean(R.bool.keyfile_default));
         setContentView(R.layout.password);
@@ -296,7 +292,17 @@ public class PasswordActivity extends LockingActivity implements FingerPrintHelp
                 public void afterTextChanged(final Editable s) {
                     final boolean validInput = s.length() > 0;
                     // encrypt or decrypt mode based on how much input or not
-                    confirmationView.setText(validInput ? R.string.store_with_fingerprint : R.string.scanning_fingerprint);
+                    int messageId;
+                    if (validInput) {
+                        messageId = R.string.store_with_fingerprint;
+                    }
+                    else if (EmptyUtils.isNullOrEmpty(prefsNoBackup.getString(getPreferenceKeyValue(), null))) {
+                        messageId = R.string.no_password_stored;
+                    }
+                    else {
+                        messageId = R.string.scanning_fingerprint;
+                    }
+                    confirmationView.setText(messageId);
                     mode = validInput ? toggleMode(Cipher.ENCRYPT_MODE) : toggleMode(Cipher.DECRYPT_MODE);
 
                 }
@@ -309,12 +315,9 @@ public class PasswordActivity extends LockingActivity implements FingerPrintHelp
                         final int errorCode,
                         final CharSequence errString) {
 
-                    // this is triggered on stop/start listening done by helper to switch between modes so don't restart here
-                    // errorCode = 5
-                    // errString = "Fingerprint operation canceled."
-                    //onException();
-                    //confirmationView.setText(errString);
-                    // true false fingerprint readings are handled otherwise with the toast messages, see below in code
+                    if (errorCode != 5) { // FINGERPRINT_ERROR_CANCELLED (not defined in support library)
+                        onException(errString);
+                    }
                 }
 
                 @Override
@@ -347,7 +350,7 @@ public class PasswordActivity extends LockingActivity implements FingerPrintHelp
 
                 @Override
                 public void onAuthenticationFailed() {
-                    onException();
+                    onException(R.string.fingerprint_notrecognized);
                 }
             });
         }
@@ -363,7 +366,6 @@ public class PasswordActivity extends LockingActivity implements FingerPrintHelp
     }
 
     private int toggleMode(final int newMode) {
-        // check if mode is different so we can update fingerprint helper
         if (mode != newMode) {
             mode = newMode;
             switch (mode) {
@@ -377,9 +379,12 @@ public class PasswordActivity extends LockingActivity implements FingerPrintHelp
                     }
                     break;
             }
-            return newMode;
         }
-        // remains in current mode
+        else {
+            fingerPrintHelper.stopListening();
+            fingerPrintHelper.startListening();
+        }
+
         return mode;
     }
 
@@ -471,7 +476,6 @@ public class PasswordActivity extends LockingActivity implements FingerPrintHelp
     @Override
     public void onInvalidKeyException() {
         Toast.makeText(this, R.string.fingerprint_invalid_key, Toast.LENGTH_SHORT).show();
-        checkAvailability(); // restarts listening
     }
 
     @Override
@@ -482,10 +486,28 @@ public class PasswordActivity extends LockingActivity implements FingerPrintHelp
     @Override
     public void onException(boolean showMessage) {
         if (showMessage) {
-            Toast.makeText(this, R.string.fingerprint_error, Toast.LENGTH_SHORT).show();
+            onException(R.string.fingerprint_error);
         }
-        checkAvailability(); // restarts listening
+    }
 
+    @Override
+    public void onException(int resId) {
+        Toast.makeText(this, resId, Toast.LENGTH_SHORT).show();
+    }
+
+    @Override
+    public void onException(CharSequence message) {
+        Toast.makeText(this, message, Toast.LENGTH_SHORT).show();
+    }
+
+    @Override
+    public void onKeyInvalidated() {
+        prefsNoBackup.edit()
+                .remove(getPreferenceKeyValue())
+                .remove(getPreferenceKeyIvSpec())
+                .commit();
+
+        confirmationView.setText(R.string.fingerprint_key_invalidated);
     }
 
     private class DefaultCheckChange implements CompoundButton.OnCheckedChangeListener {
